@@ -1,7 +1,8 @@
 bl_info = {
     "name": "Import QV-Pen Line Data to Blender",
-    "author": "Hiyakake/ひやかけ",
-    "version": (0, 2),
+    "author": "ひやかけ/Hiyakake",
+    "website": "https://github.com/hiyakake/Import-QV-Pen-Line-Data-to-Blender",
+    "version": (0, 3),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > QV Pen Importer",
     "description": "This plugin imports QV-Pen line data to Blender. Export QV-Pen data from the world where Dolphiiiin's \"QvPen Exporter / Importer\" (https://booth.pm/ja/items/6499949) is installed, and use \"QvPen Export Formatter\" (https://dolphiiiin.github.io/qvpen-export-formatter/) to convert it into a JSON file. This tool can import the converted JSON file as a mesh path. The color and thickness are inherited. The coordinates correspond to the location where the line is drawn on the VRC world.",
@@ -60,6 +61,13 @@ bpy.types.Scene.json_emission_strength = bpy.props.FloatProperty(
     default=1.0,
     min=0.0,
     soft_max=10.0
+)
+
+# データ準備説明の表示/非表示を切り替えるプロパティ
+bpy.types.Scene.show_data_preparation = bpy.props.BoolProperty(
+    name="データの準備についての説明を表示",
+    description="QVペンデータの準備方法に関する説明を表示/非表示",
+    default=False
 )
 
 # JSON ファイルを選択するオペレーター
@@ -225,6 +233,28 @@ class VIEW3D_PT_QVPenPanel(bpy.types.Panel):
         
         layout.prop(scene, "json_filepath")
         layout.operator("import.json_file", text="Select JSON File")
+        
+        # データの準備について（折りたたみ可能なボックス）
+        box = layout.box()
+        row = box.row()
+        row.prop(scene, "show_data_preparation", icon="DISCLOSURE_TRI_DOWN" if scene.show_data_preparation else "DISCLOSURE_TRI_RIGHT", 
+                 icon_only=True, emboss=False)
+        row.label(text="データの準備について")
+        
+        if scene.show_data_preparation:
+            column = box.column()
+            column.scale_y = 0.7
+            column.label(text="QV ペンのデータを Dolphiiiin 様作成の「QvPen Exporter / Importer」")
+            column.label(text="（https://booth.pm/ja/items/6499949）が設置された")
+            column.label(text="ワールドでエクスポートし、「QvPen Export Formatter」")
+            column.label(text="（https://dolphiiiin.github.io/qvpen-export-formatter/）を")
+            column.label(text="使ってJSONファイルに変換したものを本ツールに読み込ませると")
+            column.label(text="メッシュ化したパスとしてインポートできます。")
+            
+            # URLをクリック可能なオペレーターとして追加
+            box.operator("wm.url_open", text="QvPen Exporter / Importer（Booth）").url = "https://booth.pm/ja/items/6499949"
+            box.operator("wm.url_open", text="QvPen Export Formatter（Web）").url = "https://dolphiiiin.github.io/qvpen-export-formatter/"
+            
         layout.separator()
         
         # 曲線設定
@@ -273,6 +303,7 @@ def unregister():
     del bpy.types.Scene.json_solidify_thickness
     del bpy.types.Scene.json_emission_strength
     del bpy.types.Scene.json_shader_type
+    del bpy.types.Scene.show_data_preparation
 
 if __name__ == "__main__":
     register()
