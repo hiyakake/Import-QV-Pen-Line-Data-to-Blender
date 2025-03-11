@@ -1,8 +1,8 @@
 bl_info = {
     "name": "Import QV-Pen Line Data to Blender",
     "author": "Hiyakake/ひやかけ",
-    "version": (0, 1),
-    "blender": (2, 80, 0),
+    "version": (0, 2),
+    "blender": (4, 0, 0),
     "location": "View3D > Sidebar > QV Pen Importer",
     "description": "This plugin imports QV-Pen line data to Blender. Export QV-Pen data from the world where Dolphiiiin's \"QvPen Exporter / Importer\" (https://booth.pm/ja/items/6499949) is installed, and use \"QvPen Export Formatter\" (https://dolphiiiin.github.io/qvpen-export-formatter/) to convert it into a JSON file. This tool can import the converted JSON file as a mesh path. The color and thickness are inherited. The coordinates correspond to the location where the line is drawn on the VRC world.",
     "category": "Import-Export",
@@ -42,6 +42,26 @@ bpy.types.Scene.json_add_solidify = bpy.props.BoolProperty(
     default=False
 )
 
+# シェーダータイプの選択（EnumProperty）
+bpy.types.Scene.json_shader_type = bpy.props.EnumProperty(
+    name="シェーダータイプ",
+    description="使用するシェーダーのタイプを選択",
+    items=[
+        ('PRINCIPLED', 'Principled BSDF', 'メッシュの形が目立ち陰影がはっきり出やすいシェーダーです。リアルな質感を表現します。'),
+        ('EMISSION', '放射シェーダー', 'どの角度からも均一に見えるシェーダーです。QVPenとの見え方に近いですが、発光するため色が異なります。')
+    ],
+    default='PRINCIPLED'
+)
+
+# 放射シェーダーの強度
+bpy.types.Scene.json_emission_strength = bpy.props.FloatProperty(
+    name="放射強度",
+    description="放射シェーダーの強度",
+    default=1.0,
+    min=0.0,
+    soft_max=10.0
+)
+
 # JSON ファイルを選択するオペレーター
 class IMPORT_OT_JSONFile(bpy.types.Operator):
     bl_idname = "import.json_file"
@@ -79,6 +99,11 @@ class OBJECT_OT_GeneratePaths(bpy.types.Operator):
         
         exported_data = data.get("exportedData", [])
         collection = context.collection
+        
+        # 親オブジェクトを作成（すべてのパスの親となる）
+        parent_obj = bpy.data.objects.new("QVPen_Paths_Parent", None)  # Noneはオブジェクトデータなし（Empty）を意味する
+        parent_obj.location = (0, 0, 0)  # 原点に配置
+        collection.objects.link(parent_obj)
         
         # 16進数カラーを RGBA タプル (0～1) に変換する関数
         def hex_to_rgba(hex_str):
@@ -126,6 +151,9 @@ class OBJECT_OT_GeneratePaths(bpy.types.Operator):
             curve_obj = bpy.data.objects.new(name=f"Stroke_{i}", object_data=curve_data)
             collection.objects.link(curve_obj)
             
+            # 親オブジェクトの子として設定
+            curve_obj.parent = parent_obj
+            
             # ソリッド化モディファイアの追加
             if context.scene.json_add_solidify:
                 mod = curve_obj.modifiers.new(name="Solidify", type='SOLIDIFY')
@@ -139,14 +167,39 @@ class OBJECT_OT_GeneratePaths(bpy.types.Operator):
                 mat = bpy.data.materials.new(name=f"StrokeMaterial_{color_hex}")
                 mat.use_nodes = True
                 nodes = mat.node_tree.nodes
-                bsdf = nodes.get("Principled BSDF")
-                if bsdf:
+                links = mat.node_tree.links
+                
+                # デフォルトのノードを削除
+                for node in nodes:
+                    nodes.remove(node)
+                
+                # マテリアル出力ノードを追加
+                output_node = nodes.new(type='ShaderNodeOutputMaterial')
+                output_node.location = (300, 0)
+                
+                if context.scene.json_shader_type == 'EMISSION':
+                    # 放射シェーダーを使用する場合
+                    emission_node = nodes.new(type='ShaderNodeEmission')
+                    emission_node.location = (0, 0)
+                    emission_node.inputs["Color"].default_value = rgba
+                    emission_node.inputs["Strength"].default_value = context.scene.json_emission_strength
+                    
+                    # ノードを接続
+                    links.new(emission_node.outputs["Emission"], output_node.inputs["Surface"])
+                else:
+                    # Principled BSDFを使用する場合
+                    bsdf = nodes.new(type='ShaderNodeBsdfPrincipled')
+                    bsdf.location = (0, 0)
                     bsdf.inputs["Base Color"].default_value = rgba
                     bsdf.inputs["Metallic"].default_value = 0.0
                     bsdf.inputs["Roughness"].default_value = 1.0
                     bsdf.inputs["IOR"].default_value = 0.5
                     if "Alpha" in bsdf.inputs:
                         bsdf.inputs["Alpha"].default_value = 1.0
+                    
+                    # ノードを接続
+                    links.new(bsdf.outputs["BSDF"], output_node.inputs["Surface"])
+                
                 material_cache[color_hex] = mat
             
             # オブジェクトにマテリアルを割り当て
@@ -173,10 +226,30 @@ class VIEW3D_PT_QVPenPanel(bpy.types.Panel):
         layout.prop(scene, "json_filepath")
         layout.operator("import.json_file", text="Select JSON File")
         layout.separator()
-        layout.prop(scene, "json_extrude")
-        layout.prop(scene, "json_add_solidify")
+        
+        # 曲線設定
+        box = layout.box()
+        box.label(text="曲線設定")
+        box.prop(scene, "json_extrude")
+        box.prop(scene, "json_add_solidify")
         if scene.json_add_solidify:
-            layout.prop(scene, "json_solidify_thickness")
+            box.prop(scene, "json_solidify_thickness")
+        
+        # マテリアル設定
+        box = layout.box()
+        box.label(text="マテリアル設定")
+        
+        # シェーダータイプ選択（トグルボタンとして表示）
+        box.prop(scene, "json_shader_type", expand=True)
+        
+        # シェーダータイプに応じた説明文を追加
+        if scene.json_shader_type == 'PRINCIPLED':
+            box.label(text="※ メッシュの形が目立ち、陰影がはっきり出ます")
+        else:  # EMISSION
+            box.label(text="※ どの角度からも均一に見えます（QVPenに近い）")
+            box.label(text="※ 発光するため色合いが原画と異なります")
+            box.prop(scene, "json_emission_strength")
+            
         layout.separator()
         layout.operator("object.generate_json_paths", text="Generate Paths")
 
@@ -198,6 +271,8 @@ def unregister():
     del bpy.types.Scene.json_extrude
     del bpy.types.Scene.json_add_solidify
     del bpy.types.Scene.json_solidify_thickness
+    del bpy.types.Scene.json_emission_strength
+    del bpy.types.Scene.json_shader_type
 
 if __name__ == "__main__":
     register()
